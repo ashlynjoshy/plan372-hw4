@@ -1,0 +1,214 @@
+---
+title: "Hw 4"
+format: html
+editor: visual
+---
+
+# Homework 4: Linear regression
+You have been contracted by a group of investors interested in starting a new airline, Air Carolina, based at RDU airport. They feel that RDU does not have enough domestic non-stop flights, and want Air Carolina to fill that void. They want you to build a model to help them understand which routes are likely to have enough demand to support new non-stop service. They want to use the model to understand what factors are associated with a popular air route, and to forecast demand on some of the routes they are considering.
+
+They have provided you with data on the popularity of existing US domestic air traffic by major carriers, derived from the United States Bureau of Transportation Statistics Airline Origin and Destination Survey DB1B database. This dataset includes total passenger numbers for October 2021 - September 2022 between all airport pairs in the US served by nonstop flights. The data also include information on what Census metropolitan or micropolitan areaLinks to an external site. each airport is a part of, and the distance between each pair of airports. You can use the tidycensus package to retrieve demographic information about each metropolitan area, to include as demographic variables in your model. You can choose the variables you think are best, but you should definitely include population. You may also want to look at economic indicators—for example, high-income population, as higher-income people fly more often.
+
+You should describe your findings and recommendations in a well-written report to Air Carolina investors (complete sentences, please 🙂). This report should be uploaded to Canvas, and should include a link to your code on Github (repository can be public or private; if private, add me as a collaborator - my github username is mattwigway).
+
+In addition to the points below, you will get:
+
+1 point for code uploaded to Github, with comments explaining what each line does
+1 point for code that runs top to bottom without errors (If you don’t get this point but the code runs on your machine without errors, talk to me in class or office hours. If the error is due to differences between our machines, I will give you this point back.)
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggthemes)
+library(tidycensus)
+```
+
+```{r}
+data = read.csv("airport_pairs.csv")
+data
+```
+
+# Question 1: Market saturation analysis
+The first question the investors want to understand is how popular the existing routes from or to RDU are. Create a table of the existing flights to or from RDU, and the number of passengers passenger traveling to each destination. Make sure to include both flights departing RDU and those arriving RDU. There are a few records in the data for flights between RDU and places that do not have nonstop service from RDU (e.g. Fairbanks, Tucson). Filter your table to only include airport pairs with more 10,000 passengers. [0.5 points]
+
+```{r}
+#Flights with origin of RDU, number of passengers per destination
+data |>
+  filter(origin=="RDU") |>
+  filter(passengers >= 10000) |>
+  group_by(dest) |>
+  summarize(passengers=sum(passengers)) |>
+  ungroup()
+
+#Flights with destination of RDU, number of passengers who came from each origin
+data |>
+  filter(dest=="RDU") |>
+  filter(passengers >= 10000) |>
+  group_by(origin) |>
+  summarize(passengers=sum(passengers)) |>
+  ungroup()
+```
+
+
+
+# Question 2: Bringing in Census data
+Use tidycensus to retrieve Census data and match it to the airport pair data (the full dataset, not only flights to/from RDU). The geography you’ll want to use with tidycensus is cbsa for core-based statistical area; this will match the origin_cbsa and dest_cbsa codes in the airport data. Core-based statistical area is Census jargon for a city and its suburbs. Retrieve at least the total population, but consider whether there are any other variables you want to include that may be predictive of air travel volumes.
+
+Join the CBSA population data to the airport data. You will need to join it twice, so that you have total population for the origin CBSA and the destination CBSA. You may want to create copies of the Census data with the variables renamed before joining, so that you know which columns are for the origin vs. destination airport. For instance, you might create one table with the population column called “origin_pop” and then join based on the origin CBSA, and another with the column called “destination_pop”, and then join based on the destination CBSA. If you get errors about types not matching, look at how we solved this in the R GIS exercise.
+
+
+```{r}
+#Get data, name it origin_pop to make it easier to join
+origin_pop = get_acs(
+  geography="cbsa",  
+  variables=c(
+    "origin_pop"="B01003_001"
+  ),
+  year=2021,
+  survey="acs5",
+  output="wide"
+)
+origin_pop
+```
+
+```{r}
+#Get data, name it dest_pop to make it easier to join
+dest_pop = get_acs(
+  geography="cbsa", 
+  variables=c(
+    "dest_pop"="B01003_001"
+  ),
+  year=2021,
+  survey="acs5",
+  output="wide"
+)
+dest_pop
+```
+
+
+```{r}
+#Create new table for joined data 
+#Change cbsa columns to character type
+data_combined = read_csv(
+  "airport_pairs.csv", 
+  col_types=c(origin_cbsa="character", dest_cbsa="character")
+  )
+```
+
+```{r}
+#Join data together by matching origin_cbsa values with GEOID
+data_combined = left_join(data_combined, origin_pop, by=c("origin_cbsa"="GEOID"))
+```
+
+```{r}
+#Join data together by matching dest_cbsa values with GEOID
+data_combined = left_join(data_combined, dest_pop, by=c("dest_cbsa"="GEOID"))
+```
+
+
+Some areas are served by multiple airports (for instance, Chicago is served by both O’Hare and Midway International Airports). The data show airport-to-airport volumes. Use group_by and summarize to create a new dataset that shows total CBSA to CBSA volumes.
+
+A few airports are not in a metropolitan area. You can remove them from this analysis.
+
+Generate scatterplots between origin population and total passengers, destination population and total passengers, and flight distance and total passengers. Include the scatterplots in your report, and describe what trend they show (if any). [1.5 points]
+
+Extra credit: include a pair of scatterplots for another variable other than population, at the origin and destination [+1 point]
+
+```{r}
+#Group origin data by cbsa and sum passengers 
+origin_total = data_combined |>
+  group_by(origin_cbsa) |>
+  summarize(passengers=sum(passengers)) |>
+  ungroup()
+```
+
+```{r}
+#Join airplane data with population data
+origin_total = left_join(origin_total, origin_pop, by=c("origin_cbsa"="GEOID"))
+origin_total
+```
+
+
+```{r}
+ggplot(origin_total, aes(x=origin_popE, passengers)) +
+  geom_point()
+```
+
+```{r}
+#Group dest data by cbsa and sum passengers 
+dest_total = data_combined |>
+  group_by(dest_cbsa) |>
+  summarize(sum_passengers=sum(passengers)) |>
+  ungroup()
+
+#Join airplane data with population data
+dest_total = left_join(dest_total, dest_pop, by=c("dest_cbsa"="GEOID"))
+dest_total
+```
+
+```{r}
+ggplot(dest_total, aes(x=dest_popE, sum_passengers)) +
+  geom_point()
+```
+
+```{r}
+#Group distance data by number of miles and sum passengers 
+distance_total = data_combined |>
+  group_by(distancemiles) |>
+  summarize(passengers=sum(passengers)) |>
+  ungroup()
+distance_total
+
+ggplot(distance_total, aes(x=distancemiles, passengers)) +
+  geom_point()
+```
+
+
+#Question 3: Passenger volume regression
+Run a regression of total CBSA-to-CBSA passenger volumes on origin CBSA population, destination CBSA population, distance between cities, and any other Census variables you wish to include. Use all the data, not just data for flights coming to/going from RDU. Present the results of your regression as a table in your writeup, and interpret the coefficients (e.g., how many more airline passengers are associated with a 1000-person increase in population at the origin city, etc.) Interpret all coefficients in the model (except the constant/intercept). Do the coefficients make sense? Are they statistically significant? Does the model fit well, as indicated by 
+? [2 points + 1 extra credit point for including and interpreting variables other than population]
+
+```{r}
+#Create model to predict number of passengers
+model = lm(passengers~origin_popE+dest_popE+distancemiles, data_combined)
+summary(model)
+```
+
+#Question 4: Passenger volume prediction
+These are the routes Air Carolina is considering implementing:
+
+RDU to Portland, OR (PDX) - 2,363 mi
+RDU to El Paso, TX (ELP) - 1,606 mi
+RDU to Tallahassee, FL (TLH) - 496 mi
+RDU to Sacramento, CA (SMF) - 2,345 mi
+
+Use your model to predict passenger demand on these routes. Be sure to predict demand in both directions, i.e. RDU to the destination, and the destination to RDU. Since your model is based on origin and destination metropolitan area Census data, you’ll have to find that data for these cities, and create a new table to predict from (it should already be in your dataset, since airlines already fly to all of these cities, just not from RDU).
+
+Include a table with forecast demand for each route in your writeup, and discuss which route is likely to be the most popular. How confident are you in your projection, based on the 
+ of your model? Are there any unexpected or nonsensical results? [2 points]
+
+```{r}
+#Create new table with particular routes
+#Origin and destination population taken from other tables 
+table = tribble(
+    ~origin, ~dest, ~origin_popE, ~dest_popE, ~distancemiles,
+    "RDU",        "PDX",        1391801,         2493429,         2363,
+    "PDX",        "RDU",        2493429,         1391801,         2363,
+    "RDU",        "ELP",        1391801,         863807,          1606,
+    "ELP",        "RDU",        863807,          1391801,         1606,
+    "RDU",        "TLH",        1391801,         382747,          496,
+    "TLH",        "RDU",        382747,          1391801,         496,
+    "RDU",        "SMF",        1391801,         2379368,         2345,
+    "SMF",        "RDU",        2379368,         1391801,         2345
+)
+table
+```
+
+```{r}
+#Use model to predict number of passengers for each route
+table$predicted_passengers = predict(model, table)
+table
+```
+
+
+
